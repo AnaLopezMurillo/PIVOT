@@ -1,0 +1,10 @@
+lightkurve
+matplotlib
+numpy
+pandas
+batman-package  # BATMAN (Kreidberg 2015): https://lkreidberg.github.io/batman/docs/html/installation.html
+scipy
+emcee
+corner
+celerite2
+pytest-shutil
