@@ -1,5 +1,5 @@
 """
-    PIVOT - Planetary Interactions: Variations of Timing
+    PIVOT Package - Planetary Interactions: Variations of Timing
 """
 import lightkurve as lk
 from lightkurve import LightCurveCollection
@@ -238,6 +238,7 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
         ```
     :param instrument: string of either 'K2', 'Kepler', or 'TESS'. Determines which limb-darkening parameters are used in the transit BATMAN fit
     :param window_mult: optional parameter detailing how large to make the fit window. Default is 2 times the transit duration.
+    :param flag_bounds: optional parameter detailing what time bounds to skip (ex. if break in data because of TESS data dump)
     :return: None
     '''
     if instrument == 'TESS':
@@ -270,41 +271,34 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
     rho = 1.4
 
     for i in np.arange(-10000, 10000, 1):
-
         t0_guess = t0+(per*i)
-
                   # t0  #logsigma #logrho  #logQ
         initial = [t0_guess, -4,  np.log(rho),  0.7]
 
         window = window_mult*td
-
         ll = np.where((time_array > t0_guess - window) & (time_array < t0_guess + window))
         ll2 = np.where((time_array > t0_guess - 0.1) & (time_array < t0_guess + 0.1))
-
-        # print(t0_guess)
+        
         if (flag_bounds is not None) and (t0_guess in flag_bounds):
             continue
 
-        if (np.size(ll) > 0 and np.size(ll2) > 1): 
-            y = np.array(data[ll])
-            t = np.array(time_array[ll])
+        if (np.size(ll[0]) > 0 and np.size(ll2[0]) > 1): 
+            y = np.array(data[ll[0]])
+            t = np.array(time_array[ll[0]])
             err = None
 
-            if not (isinstance(yerr, np.ndarray)):
-                 err = yerr
-            else:
-                 err = yerr[ll]
+            print(type(yerr))
 
-            # if instrument == 'TESS':
-            #      err = yerr
-            # elif (instrument == 'Kepler') or (instrument == 'K2'):
-            #     err = yerr[ll]
+            if not (isinstance(yerr, float)):
+                 err = yerr[ll[0]]
+            else:
+                err = yerr
 
             transit_num+=1
 
             # Non-periodic component
             term2 = terms.SHOTerm(sigma=np.exp(initial[1]), rho=np.exp(initial[2]), Q=np.exp(initial[3]))
-            ## just use the quasi-periodic one for now
+            ## just use the quasi-periodic one
             kernel = term2
 
             # Setup the GP
@@ -318,7 +312,7 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
             max_n = 15000
             nwalkers = 30
             initial_positions = initial + 0.001 * np.random.randn(nwalkers, len(initial))
-            sampler = emcee.EnsembleSampler(nwalkers, len(initial), ln_probability, args=(time_array[ll], gp, data[ll], err, t0_guess, transit_params, t0_explore), threads=8)
+            sampler = emcee.EnsembleSampler(nwalkers, len(initial), ln_probability, args=(t, gp, y, err, t0_guess, transit_params, t0_explore), threads=8)
 
             # We'll track how the average autocorrelation time estimate changes
             index = 0
@@ -328,7 +322,7 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
             old_tau = np.inf
 
             for sample in sampler.sample(initial_positions, iterations=max_n, progress=True):
-                # Check convergence every 250 steps
+                # Check convergence every 1000 steps
                 if sampler.iteration % 1000:
                     continue
                 
