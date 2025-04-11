@@ -260,8 +260,6 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
     tt_obs_lower = []
     tt_obs_upper = []
 
-    err_test = []
-
     model_gp = []
     mu_gp = []
 
@@ -363,8 +361,7 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
             tt_obs_lower.append(mcmc[1]-mcmc[0])
             tt_obs_upper.append(mcmc[2]-mcmc[1])
             oc.append((result[0]-t0_guess)*24*60)
-            terr.append(24*60*np.std(flats[:,0]))
-            err_test.append(24*60*(np.percentile(flats[:,0], 84) - np.percentile(flats[:,0], 16))/2)
+            terr.append(24*60*(np.percentile(flats[:,0], 84) - np.percentile(flats[:,0], 16))/2)
 
             print((result[0]-t0_guess)*24*60, 24*60*np.std(flats[:,0]), 24*60*(np.percentile(flats[:,0], 84) - np.percentile(flats[:,0], 16))/2)
             print("chi2: " + str(chi2))
@@ -434,12 +431,12 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
             mu_gp.append(mu)
 
             ## save to csv as we go
-            df = pd.DataFrame({'time': tt_exp, 'oc': oc, 'err': terr, 'err_test': err_test})
+            df = pd.DataFrame({'time': tt_exp, 'oc': oc, 'err': terr})
             df.to_csv('csvs/' + str(planet_name) + str(instrument) +'_test.csv', index=False)
 
             ## save the o-c diagram as we go
             oc_path = './plots/' + str(planet_name) + '_' + str(instrument)
-            plot_ttv(tt_exp, oc, err_test, path=oc_path)
+            plot_ttv(tt_exp, oc, terr, path=oc_path)
             
     return df
 
