@@ -64,16 +64,16 @@ def download_lightkurve(system_name, instrument):
     """
         Downloads all lightkurve data for a given system.
 
-        Gives priority to shorter cadence data if available
+        Gives priority to shorter cadence data if available.
 
         :param system_name: Lightkurve-applicable name of the system to download
         :param instrument: "Kepler" or "K2SFF"
 
-        :return: Pandas DataFrame of the requested planet's data
+        :return: Pandas DataFrame of the requested planet's data, or throws an Exception on error analysis download
     """
     try:
         search_result_short = lk.search_lightcurve(target=system_name, mission=instrument, cadence='short')
-        search_result_long = lk.search_lightcurve(target=system_name, mission=instrument, cadence=1800) # putting stand-in for 'long' bc when putting in long the quarters check was not working
+        search_result_long = lk.search_lightcurve(target=system_name, mission=instrument, cadence=1800)
 
         lcs, lcs_long = search_result_short.download_all(), search_result_long.download_all()
         lcs_total = lcs
@@ -83,7 +83,7 @@ def download_lightkurve(system_name, instrument):
 
         # if there is no short data, save only the long LCs
         if lcs is None:
-             lcs_total = lcs_long 
+             lcs_total = lcs_long
 
         if kepler_flag and lcs_long is not None and lcs is not None:
             quarters_short = lcs.quarter
@@ -185,10 +185,13 @@ def ln_likelihood(theta, time, gp, data, err, transit_params):
     model = _transit(time, t0, transit_params)
     return gp.log_likelihood(data-model)
 
-## let's add some weak priors to stop the parameters from going wild
 def ln_prior(theta, t0_guess, t0_explore):
     """
-        t0_explore: float saying how large to set the parameter space exploration of the planet
+        Computes a prior for the GP calculation. 
+
+        :param theta: input parameters, tuple of form (t0, logsigma, logrho, logQ) 
+        :param t0_guess: guess of planet's time of transit midpoint. Calculated from per*increment from time of conjunction
+        :param t0_explore: float saying how large to set the parameter space exploration of the planet
     """
     # TO-DO 2/14/25: make some sort of vetting to see if the window is too large (np.max-np.min) on t0 prior? have to restart the chain probably if we do this though...
     t0, logsigma, logrho, logQ = theta
@@ -244,7 +247,6 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
     if instrument == 'TESS':
             u1, u2 = planet["u1"], planet["u2"]
             t0_planet = planet["t0"] - 2457000
-            print(t0_planet)
     elif instrument == 'K2' or 'Kepler':
             u1, u2 = planet["u1_k2"], planet["u2_k2"]
             t0_planet = planet["t0"] - 2454833
@@ -285,8 +287,6 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
             t = np.array(time_array[ll[0]])
             err = None
 
-            print(type(yerr))
-
             if not (isinstance(yerr, float)):
                  err = yerr[ll[0]]
             else:
@@ -296,7 +296,6 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
 
             # Non-periodic component
             term2 = terms.SHOTerm(sigma=np.exp(initial[1]), rho=np.exp(initial[2]), Q=np.exp(initial[3]))
-            ## just use the quasi-periodic one
             kernel = term2
 
             # Setup the GP
@@ -312,7 +311,6 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
             initial_positions = initial + 0.001 * np.random.randn(nwalkers, len(initial))
             sampler = emcee.EnsembleSampler(nwalkers, len(initial), ln_probability, args=(t, gp, y, err, t0_guess, transit_params, t0_explore), threads=8)
 
-            # We'll track how the average autocorrelation time estimate changes
             index = 0
             autocorr = np.empty(max_n)
             autcorrreq = 50
@@ -324,8 +322,6 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
                 if sampler.iteration % 1000:
                     continue
                 
-                # Compute the autocorrelation time so far
-                # Using tol=0 means that we'll always get an estimate even if it isn't trustworthy
                 tau = sampler.get_autocorr_time(tol=0)
                 autocorr[index] = np.mean(tau)
                 index += 1
@@ -341,7 +337,7 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
                     print(np.max(tau*autcorrreq)//1,sampler.iteration,(100*np.max(np.abs(old_tau - tau) / tau))//1 )
                 old_tau = tau
 
-            ## burn and flat samples finding
+            ## Burn and flat samples finding
             burn = sampler.iteration//5
             flat_samples = sampler.get_chain(discard=burn, thin=3, flat=True)
             mcmc = np.percentile(flat_samples[:, 0], [16, 50, 84])
@@ -349,7 +345,7 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
             samples = sampler.get_chain(discard=burn)
             flats = np.concatenate(samples)
 
-            # append the fit values 
+            # Append the fit values 
             result = np.median(flat_samples,axis=0)
             set_params(result, t, gp, err)
             model = _transit(t,result[0], transit_params)
@@ -363,10 +359,11 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
             oc.append((result[0]-t0_guess)*24*60)
             terr.append(24*60*(np.percentile(flats[:,0], 84) - np.percentile(flats[:,0], 16))/2)
 
-            print((result[0]-t0_guess)*24*60, 24*60*np.std(flats[:,0]), 24*60*(np.percentile(flats[:,0], 84) - np.percentile(flats[:,0], 16))/2)
-            print("chi2: " + str(chi2))
+            print("Observed-Calculated value: " + str(oc[len(oc)-1]))
+            print("Error: " + str(terr[len(terr)-1]))
+            # print((result[0]-t0_guess)*24*60, 24*60*(np.percentile(flats[:,0], 84) - np.percentile(flats[:,0], 16))/2)
 
-            ## save plots to folder, redefine plots path
+            ## save plots to folder, redefine plots path global
             plots_path = './plots/' + str(planet_name) + '/' + str(instrument) + '/' + str(planet_name) + '_' + str(transit_num) + '/' + str(transit_num)
 
             # walker plot
@@ -379,7 +376,7 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
                 ax.set_xlim(0, len(samples))
                 ax.set_ylabel(labels[i])
                 ax.yaxis.set_label_coords(-0.1, 0.5)
-            save_plot(plots_path + '_' + str(round(oc[len(oc)-1], 2)) + '_walker.png')
+            _save_plot(plots_path + '_' + str(round(oc[len(oc)-1], 2)) + '_walker.png')
             plt.show()
 
             # corner plot
@@ -390,7 +387,7 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
                 hist_kwargs={"linewidth": 2.5},levels=[(1-np.exp(-0.5)),(1-np.exp(-2)),(1-np.exp(-4.5))],
                 title_quantiles=[0.16, 0.5, 0.84]
             )
-            save_plot(plots_path + '_' + str(round(oc[len(oc)-1], 2)) + '_corner.png')    # CAMBIAR A USAR EL RCHI2 EN EL TITULO PORFIS
+            _save_plot(plots_path + '_' + str(round(oc[len(oc)-1], 2)) + '_corner.png')
             plt.show()
 
             # data model plot
@@ -423,8 +420,8 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
             ax1.tick_params(labelsize=(fontsize)-2, length=10)
             ax2.tick_params(labelsize=(fontsize)-2, length=10)
             plt.tight_layout
-            save_plot(plots_path + '_' + str(round(oc[len(oc)-1], 2)) + '_oc.png')
-            # plt.savefig(plots_path + '_oc.png')
+            # save the model overlay plot
+            _save_plot(plots_path + '_' + str(round(oc[len(oc)-1], 2)) + '_oc.png')
             plt.show()
 
             model_gp.append(model)
@@ -460,13 +457,13 @@ def fix_trendline(tt, oc):
     return (residuals, [m, b], [err_m, err_b])
      
 
-def square(list):
+def _square(list):
     """
         Helper function for rchi2 calculation: squares each element in the list
     """
     return [j ** 2 for j in list]
 
-def divide_list(l1, l2):
+def _divide_list(l1, l2):
     res = []
     for i in range(len(l1)):
         res.append(l1[i]/l2[i])
@@ -476,7 +473,7 @@ def rchi2(oc, err):
     """ 
         Returns the rchi^2 of the O-C results for a given planet.
     """
-    return np.sum(divide_list(square(oc), square(err))) / (len(oc) - 1)
+    return np.sum(_divide_list(_square(oc), _square(err))) / (len(oc) - 1)
 
 #### ---------- Plotting Helper Functions ---------- ####
 
@@ -495,10 +492,10 @@ def plot_ttv(tt, oc, err, path=None):
         plt.ylabel('O-C (minutes)')
         plt.xlabel('Time (days)')
         plt.title('O-C Diagram')
-        save_plot(plots_path + '_OC.png')
+        _save_plot(plots_path + '_OC.png')
 
 
-def save_plot(filepath, figure=None):
+def _save_plot(filepath, figure=None):
     """
         Helper function to save a given plot for a certain filepath. Used for placing plots into correct directories.
     """
