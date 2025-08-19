@@ -1,6 +1,8 @@
 """
     PIVOT Package - Planetary Interactions: Variations of Timing
+    Written by Ana Isabel Lopez Murillo
 """
+
 import lightkurve as lk
 from lightkurve import LightCurveCollection
 import matplotlib.pyplot as plt 
@@ -129,7 +131,7 @@ def download_lightkurve(system_name, instrument):
 
 #### ---------- Transit Analysis Functions ---------- ####
 
-def _transit(t, t0, transit_params):
+def _transit(t, t0, transit_params, supersampling=None):
     """Helper for the main TTV analysis code. 
     
     Runs the BATMAN transit model using the given planetary parameters, and returns resultant flux from the model.
@@ -151,6 +153,8 @@ def _transit(t, t0, transit_params):
         *w: longitude of periastron (degrees)*
 
         *u1, u2: limb darkening coefficients. Please make sure to pass in correct coefficients for either TESS or Kepler/K2 bands.*
+
+    @param supersampling: Boolean defining whether to use supersampling in algorithm (for Kepler/low cadence data)
     
     """
     per, rp, axis, inc, ecc, w, u1, u2 = transit_params
@@ -165,7 +169,10 @@ def _transit(t, t0, transit_params):
     params.u = [u1, u2]                #limb darkening coefficients [u1, u2]
     params.limb_dark = "quadratic"       #limb darkening model
 
-    m = batman.TransitModel(params, t)    #initializes model
+    if supersampling:
+         m = batman.TransitModel(params, t, supersample_factor=10, exp_time=0.0208333333)
+    else:
+        m = batman.TransitModel(params, t)    #initializes model
     flux = m.light_curve(params)          #calculates light curve
     return flux 
 
@@ -176,13 +183,13 @@ def set_params(theta, time, gp, err):
     gp.compute(time, yerr=err, quiet=True)
     return gp
 
-def ln_likelihood(theta, time, gp, data, err, transit_params):
+def ln_likelihood(theta, time, gp, data, err, transit_params, supersampling):
     t0, logsigma, logrho, logQ = theta
     try: 
         gp = set_params(theta, time, gp, err)
     except ZeroDivisionError:
         return -np.inf
-    model = _transit(time, t0, transit_params)
+    model = _transit(time, t0, transit_params, supersampling=supersampling)
     return gp.log_likelihood(data-model)
 
 def ln_prior(theta, t0_guess, t0_explore):
@@ -206,16 +213,16 @@ def ln_prior(theta, t0_guess, t0_explore):
     lp3 = -0.5*np.sum((Q)**2/sigma_q2 + np.log(2*np.pi*sigma_q2))
     return lp1+lp3
 
-def ln_probability(theta, time, gp, data, err, t0_guess, transit_params, t0_explore):
+def ln_probability(theta, time, gp, data, err, t0_guess, transit_params, t0_explore, supersampling):
     lp = ln_prior(theta, t0_guess, t0_explore)
     if not np.isfinite(lp):
         return -np.inf
-    lnlike = ln_likelihood(theta, time,gp,data,err, transit_params)
+    lnlike = ln_likelihood(theta, time,gp,data,err, transit_params, supersampling=supersampling)
     if not np.isfinite(lnlike):
         return -np.inf
     return lp + lnlike
 
-def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bounds=None):
+def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bounds=None, cadence=None):
     '''
     Main algorithm of TTV package. Iterates through the time dataset and fits each transit iteratively using BATMAN and a Gaussian Process MCMC
 
@@ -247,12 +254,16 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
     if instrument == 'TESS':
             u1, u2 = planet["u1"], planet["u2"]
             t0_planet = planet["t0"] - 2457000
+            supersampling = False
     elif instrument == 'K2' or 'Kepler':
             u1, u2 = planet["u1_k2"], planet["u2_k2"]
             t0_planet = planet["t0"] - 2454833
+            supersampling = True
     else: 
          raise ValueError("Instrument parameter is not 'TESS', 'K2', or 'Kepler.")
-
+    
+    if cadence is None:
+         cadence = ''
     t0, per, td, t0_explore, planet_name = t0_planet, planet["per"], planet["td"], planet["t0_explore"], planet["planet_name"]
     transit_params = planet["per"], planet["rp"], planet["axis"], planet["inc"], planet["ecc"], planet["w"], u1, u2
 
@@ -270,6 +281,9 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
     transit_num = 0
     rho = 1.4
 
+    time_array = np.array(time_array)
+    data = np.array(data)
+
     for i in np.arange(-10000, 10000, 1):
         t0_guess = t0+(per*i)
                   # t0  #logsigma #logrho  #logQ
@@ -278,13 +292,15 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
         window = window_mult*td
         ll = np.where((time_array > t0_guess - window) & (time_array < t0_guess + window))
         ll2 = np.where((time_array > t0_guess - 0.1) & (time_array < t0_guess + 0.1))
+
         
         if (flag_bounds is not None) and (t0_guess in flag_bounds):
             continue
 
         if (np.size(ll[0]) > 0 and np.size(ll2[0]) > 1): 
-            y = np.array(data[ll[0]])
-            t = np.array(time_array[ll[0]])
+            transit_num+=1
+            y = np.array(data[np.array(ll[0])])
+            t = np.array(time_array[np.array(ll[0])])
             err = None
 
             if not (isinstance(yerr, float)):
@@ -292,7 +308,9 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
             else:
                 err = yerr
 
-            transit_num+=1
+            if len(t) > 200:
+                 # force no supersampling for high-cadence data 
+                 supersampling = False
 
             # Non-periodic component
             term2 = terms.SHOTerm(sigma=np.exp(initial[1]), rho=np.exp(initial[2]), Q=np.exp(initial[3]))
@@ -303,13 +321,13 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
             gp.compute(t, yerr=err)
             print("Initial log likelihood: {0}".format(gp.log_likelihood(y)))
 
-            ln_probability(initial,t,gp,y,err, t0_guess, transit_params, t0_explore)
+            ln_probability(initial,t,gp,y,err, t0_guess, transit_params, t0_explore, supersampling=supersampling)
 
             # set up MCMC sampler
             max_n = 15000
             nwalkers = 30
             initial_positions = initial + 0.001 * np.random.randn(nwalkers, len(initial))
-            sampler = emcee.EnsembleSampler(nwalkers, len(initial), ln_probability, args=(t, gp, y, err, t0_guess, transit_params, t0_explore), threads=8)
+            sampler = emcee.EnsembleSampler(nwalkers, len(initial), ln_probability, args=(t, gp, y, err, t0_guess, transit_params, t0_explore, supersampling), threads=8)
 
             index = 0
             autocorr = np.empty(max_n)
@@ -321,6 +339,7 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
                 # Check convergence every 1000 steps
                 if sampler.iteration % 1000:
                     continue
+
                 
                 tau = sampler.get_autocorr_time(tol=0)
                 autocorr[index] = np.mean(tau)
@@ -348,8 +367,8 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
             # Append the fit values 
             result = np.median(flat_samples,axis=0)
             set_params(result, t, gp, err)
-            model = _transit(t,result[0], transit_params)
-            actual = _transit(t, t0_guess, transit_params)
+            model = _transit(t,result[0], transit_params, supersampling=supersampling)
+            actual = _transit(t, t0_guess, transit_params, supersampling=supersampling)
             mu, variance = gp.predict(y-model, t, return_var=True)
             sigma = np.sqrt(variance)
             tt_exp.append(t0_guess)
@@ -364,7 +383,9 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
             # print((result[0]-t0_guess)*24*60, 24*60*(np.percentile(flats[:,0], 84) - np.percentile(flats[:,0], 16))/2)
 
             ## save plots to folder, redefine plots path global
-            plots_path = './plots/' + str(planet_name) + '/' + str(instrument) + '/' + str(planet_name) + '_' + str(transit_num) + '/' + str(transit_num)
+            fontsize = 17
+            scatter_size = 40
+            plots_path = './plots/' + str(planet_name) + '/' + str(instrument) + '/' + cadence + '/' + str(planet_name) + '_' + str(transit_num) + '/' + str(transit_num)
 
             # walker plot
             ndim = 4
@@ -376,39 +397,98 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
                 ax.set_xlim(0, len(samples))
                 ax.set_ylabel(labels[i])
                 ax.yaxis.set_label_coords(-0.1, 0.5)
-            _save_plot(plots_path + '_' + str(round(oc[len(oc)-1], 2)) + '_walker.png')
+            save_plot(plots_path + '_' + str(round(oc[len(oc)-1], 2)) + '_walker.png')
             plt.show()
 
             # corner plot
             flat_samples = sampler.get_chain(discard=burn, flat=True)
             fig = corner.corner( 
                 flat_samples,show_titles=True,labels=labels,quantiles=(0.16, 0.84),
-                fill_contours=True, plot_datapoints=False,title_kwargs={"fontsize": 9},title_fmt='.3f',
+                fill_contours=True, plot_datapoints=False,
+                title_kwargs={"fontsize": fontsize - 3},
+                title_fmt='.3f',
                 hist_kwargs={"linewidth": 2.5},levels=[(1-np.exp(-0.5)),(1-np.exp(-2)),(1-np.exp(-4.5))],
-                title_quantiles=[0.16, 0.5, 0.84]
+                title_quantiles=[0.16, 0.5, 0.84],
+                label_kwargs={"fontsize": fontsize}
             )
-            _save_plot(plots_path + '_' + str(round(oc[len(oc)-1], 2)) + '_corner.png')
+            plt.xticks(fontsize=fontsize)
+            plt.yticks(fontsize=fontsize)
+            save_plot(plots_path + '_' + str(round(oc[len(oc)-1], 2)) + '_corner.png')
             plt.show()
 
-            # data model plot
-            fontsize = 15
-            scatter_size = 40
+
+
+            ##### data model plot 1  - stellar variation #####
             fig, (ax1, ax2) = plt.subplots(2,1, sharex=True, figsize=(14, 6), gridspec_kw={'height_ratios':[3,1]})
             fig.subplots_adjust(wspace=0, hspace=0)
             print('Transit num: ' + str(transit_num))
             marker = "."
             if (np.size(ll) < 2500):
                 marker="o"
-            ax1.scatter(t,y-mu, marker=marker,alpha=0.5, label='Data', s=scatter_size)
+            # ax1.scatter(t,y-mu, marker=marker,alpha=0.5, label='Data', s=scatter_size)
+            ax1.scatter(t,y, marker=marker,alpha=0.5, label='Data', s=scatter_size)
 
             if np.size(ll) > 50:
-                bint,binfl = runmed(t,y-mu,0.33/24.)
+                bint,binfl = runmed(t,y,0.33/24.)
+                # bint,binfl = runmed(t,y-mu,0.33/24.)
+
                 bint_err, binfl_err = runmed(t, y-(model+mu), 0.33/24.)
+
+                ax1.scatter(bint, binfl,marker='o',alpha=0.7,color='r', label='Binned Data', s=scatter_size, zorder=2)
+                ax2.scatter(bint_err, binfl_err, marker='o', alpha=0.7, color='r', s=scatter_size, zorder=2)
+
+            # ax1.plot(t,model,color='black', label='Model', zorder=3, linewidth=2)
+            # ax1.plot(t,actual,color='r', zorder=4, alpha=0.7, linewidth=2, linestyle='dashed', label='Without TTV')
+
+            ax1.plot(t,model+mu,color='black', label='Model', zorder=3, linewidth=2)
+            ax1.plot(t,actual+mu,color='r', zorder=4, alpha=0.7, linewidth=2, linestyle='dashed', label='Without TTV')
+
+            ax1.set_ylabel('Normalized Flux', fontsize=fontsize)
+            # plotting the observed - predicted 
+            # ax2.errorbar(t, y-(model+mu), yerr=sigma, fmt='o', ms=6, elinewidth=1., alpha=0.5, zorder=1)
+            ax2.scatter(t, y-(model+mu), marker='o', alpha=0.5, zorder=1, s=scatter_size)
+            ax2.axhline(0, color='black', linestyle='--', zorder=3)
+            ax2.set_ylabel('Residuals', fontsize=fontsize)
+            ax2.set_xlabel('Time (days)', fontsize=fontsize)
+            ax1.legend(fontsize=fontsize)
+            ax1.tick_params(labelsize=(fontsize)-2, length=10)
+            ax2.tick_params(labelsize=(fontsize)-2, length=10)
+            plt.xticks(fontsize=fontsize-2)
+            plt.yticks(fontsize=fontsize-2)
+            plt.tight_layout
+            fig.suptitle(planet['planet_name'][:-1] + ' ' + planet['planet_name'][len(planet['planet_name']) - 1] + ' Transit ' + str(transit_num), fontsize=fontsize+3)
+            # save the model overlay plot
+            save_plot(plots_path + '_' + str(round(oc[len(oc)-1], 2)) + '_oc_var.png')
+            plt.show()
+
+
+            # data model plot 2  - no stellar variation
+            fig, (ax1, ax2) = plt.subplots(2,1, sharex=True, figsize=(14, 6), gridspec_kw={'height_ratios':[3,1]})
+            fig.subplots_adjust(wspace=0, hspace=0)
+            print('Transit num: ' + str(transit_num))
+            plt.xticks(fontsize=fontsize-2)
+            plt.yticks(fontsize=fontsize-2)
+            marker = "."
+            if (np.size(ll) < 2500):
+                marker="o"
+            ax1.scatter(t,y-mu, marker=marker,alpha=0.5, label='Data', s=scatter_size)
+            # ax1.scatter(t,y, marker=marker,alpha=0.5, label='Data', s=scatter_size)
+
+            if np.size(ll) > 50:
+                # bint,binfl = runmed(t,y,0.33/24.)
+                bint,binfl = runmed(t,y-mu,0.33/24.)
+
+                bint_err, binfl_err = runmed(t, y-(model+mu), 0.33/24.)
+
                 ax1.scatter(bint, binfl,marker='o',alpha=0.7,color='r', label='Binned Data', s=scatter_size, zorder=2)
                 ax2.scatter(bint_err, binfl_err, marker='o', alpha=0.7, color='r', s=scatter_size, zorder=2)
 
             ax1.plot(t,model,color='black', label='Model', zorder=3, linewidth=2)
             ax1.plot(t,actual,color='r', zorder=4, alpha=0.7, linewidth=2, linestyle='dashed', label='Without TTV')
+
+            # ax1.plot(t,model+mu,color='black', label='Model', zorder=3, linewidth=2)
+            # ax1.plot(t,actual+mu,color='r', zorder=4, alpha=0.7, linewidth=2, linestyle='dashed', label='Without TTV')
+
             ax1.set_ylabel('Normalized Flux', fontsize=fontsize)
             # plotting the observed - predicted 
             # ax2.errorbar(t, y-(model+mu), yerr=sigma, fmt='o', ms=6, elinewidth=1., alpha=0.5, zorder=1)
@@ -420,19 +500,23 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
             ax1.tick_params(labelsize=(fontsize)-2, length=10)
             ax2.tick_params(labelsize=(fontsize)-2, length=10)
             plt.tight_layout
+            fig.suptitle(planet['planet_name'][:-1] + ' ' + planet['planet_name'][len(planet['planet_name']) - 1] + ' Transit ' + str(transit_num), fontsize=fontsize+3)
             # save the model overlay plot
-            _save_plot(plots_path + '_' + str(round(oc[len(oc)-1], 2)) + '_oc.png')
+            save_plot(plots_path + '_' + str(round(oc[len(oc)-1], 2)) + '_oc_novar.png')
             plt.show()
 
             model_gp.append(model)
             mu_gp.append(mu)
 
             ## save to csv as we go
+                # csvs/HIP67522b/HIP67522b_TESS_120.csv
             df = pd.DataFrame({'time': tt_exp, 'oc': oc, 'err': terr})
-            df.to_csv('csvs/' + str(planet_name) + str(instrument) +'_test.csv', index=False)
+            os.makedirs(os.path.dirname('./csvs/' + str(planet_name) + '/'), exist_ok=True)
+            df.to_csv('./csvs/' + str(planet_name) + '/' + str(planet_name) + '_' + str(instrument) + '_' + cadence +'.csv', index=False)
 
             ## save the o-c diagram as we go
-            oc_path = './plots/' + str(planet_name) + '_' + str(instrument)
+                # plots/HIP67522b/HIP67522b_TESS_120_OC.png
+            oc_path = './plots/' + str(planet_name) + '/' + str(planet_name) + '_' + str(instrument) + '_' + cadence
             plot_ttv(tt_exp, oc, terr, path=oc_path)
             
     return df
@@ -492,10 +576,10 @@ def plot_ttv(tt, oc, err, path=None):
         plt.ylabel('O-C (minutes)')
         plt.xlabel('Time (days)')
         plt.title('O-C Diagram')
-        _save_plot(plots_path + '_OC.png')
+        save_plot(plots_path + '_OC.png')
 
 
-def _save_plot(filepath, figure=None):
+def save_plot(filepath, figure=None):
     """
         Helper function to save a given plot for a certain filepath. Used for placing plots into correct directories.
     """
