@@ -11,3 +11,5 @@ Installation Steps:
 </ol>
 
 Please check example.ipynb for test planet run.
+
+If you find this code useful in your analysis, please cite Lopez Murillo et al. 2025 (accepted)
