@@ -200,7 +200,6 @@ def ln_prior(theta, t0_guess, t0_explore):
         :param t0_guess: guess of planet's time of transit midpoint. Calculated from per*increment from time of conjunction
         :param t0_explore: float saying how large to set the parameter space exploration of the planet
     """
-    # TO-DO 2/14/25: make some sort of vetting to see if the window is too large (np.max-np.min) on t0 prior? have to restart the chain probably if we do this though...
     t0, logsigma, logrho, logQ = theta
     sigma = np.exp(logsigma)
     rho = np.exp(logrho)
@@ -248,7 +247,7 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
         ```
     :param instrument: string of either 'K2', 'Kepler', or 'TESS'. Determines which limb-darkening parameters are used in the transit BATMAN fit
     :param window_mult: optional parameter detailing how large to make the fit window. Default is 2 times the transit duration.
-    :param flag_bounds: optional parameter detailing what time bounds to skip (ex. if break in data because of TESS data dump)
+    :param flag_bounds: optional parameter detailing what time bounds to skip (e.g. if break in data is present because of TESS data dump)
     :return: None
     '''
     if instrument == 'TESS':
@@ -380,7 +379,6 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
 
             print("Observed-Calculated value: " + str(oc[len(oc)-1]))
             print("Error: " + str(terr[len(terr)-1]))
-            # print((result[0]-t0_guess)*24*60, 24*60*(np.percentile(flats[:,0], 84) - np.percentile(flats[:,0], 16))/2)
 
             ## save plots to folder, redefine plots path global
             fontsize = 17
@@ -425,27 +423,21 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
             marker = "."
             if (np.size(ll) < 2500):
                 marker="o"
-            # ax1.scatter(t,y-mu, marker=marker,alpha=0.5, label='Data', s=scatter_size)
             ax1.scatter(t,y, marker=marker,alpha=0.5, label='Data', s=scatter_size)
 
             if np.size(ll) > 50:
                 bint,binfl = runmed(t,y,0.33/24.)
-                # bint,binfl = runmed(t,y-mu,0.33/24.)
 
                 bint_err, binfl_err = runmed(t, y-(model+mu), 0.33/24.)
 
                 ax1.scatter(bint, binfl,marker='o',alpha=0.7,color='r', label='Binned Data', s=scatter_size, zorder=2)
                 ax2.scatter(bint_err, binfl_err, marker='o', alpha=0.7, color='r', s=scatter_size, zorder=2)
 
-            # ax1.plot(t,model,color='black', label='Model', zorder=3, linewidth=2)
-            # ax1.plot(t,actual,color='r', zorder=4, alpha=0.7, linewidth=2, linestyle='dashed', label='Without TTV')
-
             ax1.plot(t,model+mu,color='black', label='Model', zorder=3, linewidth=2)
             ax1.plot(t,actual+mu,color='r', zorder=4, alpha=0.7, linewidth=2, linestyle='dashed', label='Without TTV')
 
             ax1.set_ylabel('Normalized Flux', fontsize=fontsize)
             # plotting the observed - predicted 
-            # ax2.errorbar(t, y-(model+mu), yerr=sigma, fmt='o', ms=6, elinewidth=1., alpha=0.5, zorder=1)
             ax2.scatter(t, y-(model+mu), marker='o', alpha=0.5, zorder=1, s=scatter_size)
             ax2.axhline(0, color='black', linestyle='--', zorder=3)
             ax2.set_ylabel('Residuals', fontsize=fontsize)
@@ -472,12 +464,9 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
             if (np.size(ll) < 2500):
                 marker="o"
             ax1.scatter(t,y-mu, marker=marker,alpha=0.5, label='Data', s=scatter_size)
-            # ax1.scatter(t,y, marker=marker,alpha=0.5, label='Data', s=scatter_size)
 
             if np.size(ll) > 50:
-                # bint,binfl = runmed(t,y,0.33/24.)
                 bint,binfl = runmed(t,y-mu,0.33/24.)
-
                 bint_err, binfl_err = runmed(t, y-(model+mu), 0.33/24.)
 
                 ax1.scatter(bint, binfl,marker='o',alpha=0.7,color='r', label='Binned Data', s=scatter_size, zorder=2)
@@ -486,12 +475,8 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
             ax1.plot(t,model,color='black', label='Model', zorder=3, linewidth=2)
             ax1.plot(t,actual,color='r', zorder=4, alpha=0.7, linewidth=2, linestyle='dashed', label='Without TTV')
 
-            # ax1.plot(t,model+mu,color='black', label='Model', zorder=3, linewidth=2)
-            # ax1.plot(t,actual+mu,color='r', zorder=4, alpha=0.7, linewidth=2, linestyle='dashed', label='Without TTV')
-
             ax1.set_ylabel('Normalized Flux', fontsize=fontsize)
             # plotting the observed - predicted 
-            # ax2.errorbar(t, y-(model+mu), yerr=sigma, fmt='o', ms=6, elinewidth=1., alpha=0.5, zorder=1)
             ax2.scatter(t, y-(model+mu), marker='o', alpha=0.5, zorder=1, s=scatter_size)
             ax2.axhline(0, color='black', linestyle='--', zorder=3)
             ax2.set_ylabel('Residuals', fontsize=fontsize)
@@ -509,13 +494,11 @@ def ttv_algo(time_array, data, yerr, planet, instrument, window_mult=2, flag_bou
             mu_gp.append(mu)
 
             ## save to csv as we go
-                # csvs/HIP67522b/HIP67522b_TESS_120.csv
             df = pd.DataFrame({'time': tt_exp, 'oc': oc, 'err': terr})
             os.makedirs(os.path.dirname('./csvs/' + str(planet_name) + '/'), exist_ok=True)
             df.to_csv('./csvs/' + str(planet_name) + '/' + str(planet_name) + '_' + str(instrument) + '_' + cadence +'.csv', index=False)
 
             ## save the o-c diagram as we go
-                # plots/HIP67522b/HIP67522b_TESS_120_OC.png
             oc_path = './plots/' + str(planet_name) + '/' + str(planet_name) + '_' + str(instrument) + '_' + cadence
             plot_ttv(tt_exp, oc, terr, path=oc_path)
             
@@ -557,7 +540,7 @@ def rchi2(oc, err):
     """ 
         Returns the rchi^2 of the O-C results for a given planet.
     """
-    return np.sum(_divide_list(_square(oc), _square(err))) / (len(oc) - 1)
+    return np.sum(_divide_list(_square(oc), _square(err))) / (len(oc) - 2)
 
 #### ---------- Plotting Helper Functions ---------- ####
 
