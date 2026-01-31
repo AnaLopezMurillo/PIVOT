@@ -12,4 +12,5 @@ Installation Steps:
 
 Please check example.ipynb for test planet run.
 
-If you find this code useful in your analysis, please cite Lopez Murillo et al. (accepted)
+If you find this code useful in your analysis, please cite Lopez Murillo et al. 2026  <br>
+DOI: <a href="https://iopscience.iop.org/article/10.3847/1538-3881/ae231a">10.3847/1538-3881/ae231a</a>
